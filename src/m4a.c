@@ -1,5 +1,6 @@
 #include "global.h"
 #include "gba/m4a_internal.h"
+#include "rtc.h"
 
 extern const u8 gCgb3Vol[];
 
@@ -20,6 +21,47 @@ COMMON_DATA struct PokemonCrySong gPokemonCrySong = {0};
 COMMON_DATA u8 gMPlayMemAccArea[0x10] = {0};
 COMMON_DATA struct MusicPlayerInfo gMPlayInfo_SE3 = {0};
 
+static u16 sSpeedMult;
+static u16 sTempo;
+static u32 sPitchScale;
+static const u8 sSemitoneShifts[] = {0, 0, 12, 19, 24, 28, 31, 34, 36, 38, 40, 41, 43, 44, 46, 47, 48};
+
+void AdjustTempo(void)
+{
+    struct SiiRtcInfo rtc;
+    static u16 sFramesElapsed;
+    static u8 sLastSec;
+    int i;
+
+    sFramesElapsed++;
+
+    if (sFramesElapsed & 15)
+        return;
+
+    RtcGetDateTime(&rtc);
+
+    if (rtc.second == sLastSec)
+    {
+        return;
+    }
+    else
+    {
+        sSpeedMult = (sFramesElapsed + 30) / 60;
+        sTempo = 256 / sSpeedMult; 
+        sPitchScale = sTempo << 8;
+
+        sLastSec = rtc.second;
+        sFramesElapsed = 0;
+
+        for (i = 0; i < NUM_MUSIC_PLAYERS; i++)
+        {
+            struct MusicPlayerInfo *mplayInfo = gMPlayTable[i].info;
+            if (mplayInfo)
+                m4aMPlayTempoControl(mplayInfo, sTempo);
+        }
+    }
+}
+
 u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
 {
     u32 val1;
@@ -38,7 +80,7 @@ u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
     val2 = gScaleTable[key + 1];
     val2 = gFreqTable[val2 & 0xF] >> (val2 >> 4);
 
-    return umul3232H32(wav->freq, val1 + umul3232H32(val2 - val1, fineAdjustShifted));
+    return (u32)(((u64)umul3232H32(wav->freq, val1 + umul3232H32(val2 - val1, fineAdjustShifted)) * sPitchScale) >> 16);
 }
 
 static void UNUSED UnusedDummyFunc(void)
@@ -101,6 +143,7 @@ void m4aSoundInit(void)
 
 void m4aSoundMain(void)
 {
+    AdjustTempo();
     SoundMain();
 }
 
@@ -632,8 +675,8 @@ void MPlayStart(struct MusicPlayerInfo *mplayInfo, struct SongHeader *songHeader
         mplayInfo->priority = songHeader->priority;
         mplayInfo->clock = 0;
         mplayInfo->tempoD = 150;
-        mplayInfo->tempoI = 150;
-        mplayInfo->tempoU = 0x100;
+        mplayInfo->tempoU = sTempo;
+        mplayInfo->tempoI = (mplayInfo->tempoD * sTempo) >> 8;
         mplayInfo->tempoC = 0;
         mplayInfo->fadeOI = 0;
 
@@ -822,6 +865,14 @@ u32 MidiKeyToCgbFreq(u8 chanNum, u8 key, u8 fineAdjust)
                 key = 59;
         }
 
+        if (sSpeedMult > 1)
+        {
+            u16 noiseShift = (sSpeedMult - 1) * 4;
+            if (key > noiseShift)
+                key -= noiseShift;
+            else
+                key = 0;
+        }
         return gNoiseTable[key];
     }
     else
@@ -829,10 +880,22 @@ u32 MidiKeyToCgbFreq(u8 chanNum, u8 key, u8 fineAdjust)
         s32 val1;
         s32 val2;
 
+        if (sSpeedMult > 1)
+            key -= (sSpeedMult <= 16) ? sSemitoneShifts[sSpeedMult] : 1;
         if (key <= 35)
         {
-            fineAdjust = 0;
-            key = 0;
+            if (key <= 11)
+            {
+                fineAdjust = 0;
+            }
+            else if (key <= 23)
+            {
+                key -= 12;
+            }
+            else
+            {
+                key -= 24;
+            }
         }
         else
         {
