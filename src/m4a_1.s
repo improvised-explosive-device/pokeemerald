@@ -3,6 +3,7 @@
 	.include "constants/m4a_constants.inc"
 
 	.syntax unified
+	.extern NoResampleFreq
 
 	.text
 
@@ -310,6 +311,14 @@ _081DD068:
 	ldrb r0, [r4, o_SoundChannel_type]
 	tst r0, 0x8
 	beq _081DD19C
+	push {r2, r3, r12, lr}
+	ldr r0, [r4, o_SoundChannel_wav]
+	ldr r12, =NoResampleFreq
+	mov lr, pc
+	bx r12
+	str r0, [r4, o_SoundChannel_frequency]
+	pop {r2, r3, r12, lr}
+	b _081DD19C
 _081DD07C:
 	cmp r2, 0x4
 	ble _081DD0EC

@@ -62,6 +62,11 @@ void AdjustTempo(void)
     }
 }
 
+u32 NoResampleFreq(struct WaveData *wav)
+{
+    return (u32)(((u64)umul3232H32(wav->freq, 0x400000) * sPitchScale) >> 16);
+}
+
 u32 MidiKeyToFreq(struct WaveData *wav, u8 key, u8 fineAdjust)
 {
     u32 val1;
